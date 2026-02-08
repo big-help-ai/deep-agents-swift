@@ -15,7 +15,7 @@ public struct DeepAgentsApp: App {
         WindowGroup {
             Group {
                 if let config = config, let chatService = chatService {
-                    HomeView(
+                    AgentChatView(
                         config: config,
                         showConfigDialog: $showConfigDialog,
                         onSaveConfig: saveConfig

@@ -204,7 +204,7 @@ private struct InlineContentView: View {
         }
     }
 
-    private func renderInlineMarkup(_ markup: any Markup) -> Text {
+    private func renderInlineMarkup(_ markup: any Markup) -> SwiftUI.Text {
         switch markup {
         case let text as Markdown.Text:
             return Text(text.string)
@@ -237,7 +237,7 @@ private struct InlineContentView: View {
         }
     }
 
-    private func renderInlineChildren(_ children: [any Markup]) -> Text {
+    private func renderInlineChildren(_ children: [any Markup]) -> SwiftUI.Text {
         children.reduce(Text("")) { result, child in
             result + renderInlineMarkup(child)
         }

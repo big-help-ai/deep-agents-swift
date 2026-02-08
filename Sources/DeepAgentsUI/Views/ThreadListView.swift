@@ -21,11 +21,6 @@ public struct ThreadListView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Filter header
-            filterHeader
-
-            Divider()
-
             // Thread list
             if threadService.isLoading && threadService.threads.isEmpty {
                 loadingView
@@ -35,6 +30,11 @@ public struct ThreadListView: View {
                 threadListContent
             }
         }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                filterMenu
+            }
+        }
         .task {
             if threadService.threads.isEmpty {
                 await threadService.refresh()
@@ -42,59 +42,49 @@ public struct ThreadListView: View {
         }
     }
 
-    // MARK: - Filter Header
+    // MARK: - Filter Menu
 
-    private var filterHeader: some View {
-        HStack {
-            Menu {
-                Button("All") {
-                    statusFilter = nil
-                    threadService.setStatusFilter(nil)
-                }
-                Button("Idle") {
-                    statusFilter = .idle
-                    threadService.setStatusFilter(.idle)
-                }
-                Button("Busy") {
-                    statusFilter = .busy
-                    threadService.setStatusFilter(.busy)
-                }
-                Button("Interrupted") {
-                    statusFilter = .interrupted
-                    threadService.setStatusFilter(.interrupted)
-                }
-                Button("Error") {
-                    statusFilter = .error
-                    threadService.setStatusFilter(.error)
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(statusFilterLabel)
-                    Image(systemName: "chevron.down")
-                        .font(.caption)
-                }
-                .font(.subheadline)
+    private var filterMenu: some View {
+        Menu {
+            Button("All") {
+                statusFilter = nil
+                threadService.setStatusFilter(nil)
             }
-
-            Spacer()
-
-            Button {
-                onClose()
-            } label: {
-                Image(systemName: "xmark")
+            Button("Idle") {
+                statusFilter = .idle
+                threadService.setStatusFilter(.idle)
             }
-            .buttonStyle(.plain)
+            Button("Busy") {
+                statusFilter = .busy
+                threadService.setStatusFilter(.busy)
+            }
+            Button("Interrupted") {
+                statusFilter = .interrupted
+                threadService.setStatusFilter(.interrupted)
+            }
+            Button("Error") {
+                statusFilter = .error
+                threadService.setStatusFilter(.error)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(statusFilterLabel)
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+            }
+            .font(.headline)
         }
-        .padding()
     }
 
     private var statusFilterLabel: String {
         guard let filter = statusFilter else { return "All Threads" }
         switch filter {
+        case .all: return "All Threads"
         case .idle: return "Idle"
         case .busy: return "Busy"
         case .interrupted: return "Interrupted"
         case .error: return "Error"
+        case .humanResponseNeeded: return "Human Response Needed"
         }
     }
 
@@ -219,7 +209,16 @@ public struct ThreadListView: View {
                 .foregroundStyle(.white)
                 .clipShape(Capsule())
 
-        case .idle:
+        case .humanResponseNeeded:
+            Text("Response Needed")
+                .font(.caption2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.purple)
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
+
+        case .idle, .all:
             EmptyView()
         }
     }

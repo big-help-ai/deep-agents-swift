@@ -8,70 +8,141 @@ import SwiftyJSON
 public final class ChatService {
     // MARK: - Properties
 
-    public private(set) var streamManager: StreamManager
+    @ObservationIgnored
+    private var _streamManager: StreamManager
+
+    @ObservationIgnored
     public private(set) var client: LangGraphClient
 
-    public var messages: [Message] { streamManager.messages }
-    public var todos: [TodoItem] { streamManager.values.todos }
-    public var files: [String: String] { streamManager.values.files }
-    public var email: JSON? { streamManager.values.email }
-    public var ui: JSON? { streamManager.values.ui }
-    public var isLoading: Bool { streamManager.isLoading }
-    public var isThreadLoading: Bool { streamManager.isThreadLoading }
-    public var interrupt: InterruptData? { streamManager.interrupt }
-    public var error: Error? { streamManager.error }
+    // Stored properties that mirror StreamManager state for proper observation
+    public private(set) var messages: [Message] = []
+    public private(set) var todos: [TodoItem] = []
+    public private(set) var files: [String: String] = [:]
+    public private(set) var email: JSON?
+    public private(set) var ui: JSON?
+    public private(set) var isLoading: Bool = false
+    public private(set) var isThreadLoading: Bool = false
+    public private(set) var interrupt: InterruptData?
+    public private(set) var error: Error?
 
     public var threadId: String?
     public var assistant: Assistant?
+
+    public var streamManager: StreamManager { _streamManager }
 
     // MARK: - Callbacks
 
     public var onHistoryRevalidate: (() -> Void)?
 
+    // MARK: - Sync Timer
+
+    @ObservationIgnored
+    private var syncTimer: Timer?
+
     // MARK: - Initialization
 
     public init(deploymentUrl: String, apiKey: String?, assistantId: String) {
-        self.client = LangGraphClient(apiUrl: deploymentUrl, apiKey: apiKey)
-        self.streamManager = StreamManager(client: client, assistantId: assistantId)
+        let langGraphClient = LangGraphClient(apiUrl: deploymentUrl, apiKey: apiKey)
+        self.client = langGraphClient
+        self._streamManager = StreamManager(client: langGraphClient, assistantId: assistantId)
 
         setupCallbacks()
+        startSyncTimer()
+    }
+
+    deinit {
+        syncTimer?.invalidate()
     }
 
     private func setupCallbacks() {
-        streamManager.onThreadIdChange = { [weak self] id in
+        _streamManager.onThreadIdChange = { [weak self] id in
             self?.threadId = id
         }
 
-        streamManager.onFinish = { [weak self] in
+        _streamManager.onFinish = { [weak self] in
+            self?.syncFromStreamManager()
             self?.onHistoryRevalidate?()
         }
 
-        streamManager.onError = { [weak self] _ in
+        _streamManager.onError = { [weak self] _ in
+            self?.syncFromStreamManager()
             self?.onHistoryRevalidate?()
         }
 
-        streamManager.onCreated = { [weak self] in
+        _streamManager.onCreated = { [weak self] in
+            self?.syncFromStreamManager()
             self?.onHistoryRevalidate?()
         }
+
+        // Sync immediately when StreamManager state changes
+        _streamManager.onStateChange = { [weak self] in
+            self?.syncFromStreamManager()
+        }
+    }
+
+    /// Start a timer to sync state from StreamManager
+    private func startSyncTimer() {
+        syncTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.syncFromStreamManager()
+            }
+        }
+    }
+
+    /// Sync stored properties from StreamManager for proper observation
+    private func syncFromStreamManager() {
+        // Sync messages - only update when count or IDs change, not on content changes
+        // This avoids re-rendering during streaming (content updates don't trigger re-render)
+        // The final .values event will sync the complete messages at the end
+        let streamMessages = _streamManager.messages
+        let needsUpdate = messages.count != streamMessages.count ||
+           !messages.elementsEqual(streamMessages, by: { $0.id == $1.id })
+
+        if needsUpdate {
+            messages = streamMessages
+        }
+
+        let streamTodos = _streamManager.values.todos
+        if todos.count != streamTodos.count {
+            todos = streamTodos
+        }
+
+        if files != _streamManager.values.files {
+            files = _streamManager.values.files
+        }
+
+        email = _streamManager.values.email
+        ui = _streamManager.values.ui
+
+        if isLoading != _streamManager.isLoading {
+            isLoading = _streamManager.isLoading
+        }
+        if isThreadLoading != _streamManager.isThreadLoading {
+            isThreadLoading = _streamManager.isThreadLoading
+        }
+
+        interrupt = _streamManager.interrupt
+        error = _streamManager.error
     }
 
     // MARK: - Configuration
 
     public func configure(deploymentUrl: String, apiKey: String?, assistantId: String) {
         client = LangGraphClient(apiUrl: deploymentUrl, apiKey: apiKey)
-        streamManager = StreamManager(client: client, assistantId: assistantId)
+        _streamManager = StreamManager(client: client, assistantId: assistantId)
         setupCallbacks()
     }
 
     public func setThreadId(_ id: String?) {
         threadId = id
-        streamManager.setThreadId(id)
+        _streamManager.setThreadId(id)
+        syncFromStreamManager()
     }
 
     public func setAssistant(_ assistant: Assistant?) {
         self.assistant = assistant
         if let assistantId = assistant?.assistantId {
-            streamManager.setAssistantId(assistantId)
+            _streamManager.setAssistantId(assistantId)
         }
     }
 
@@ -97,7 +168,7 @@ public final class ChatService {
         var config = assistant?.config ?? JSON([:])
         config["recursion_limit"] = 100
 
-        streamManager.submit(
+        _streamManager.submit(
             input: input,
             optimisticValues: { prev in
                 var updated = prev
@@ -107,6 +178,8 @@ public final class ChatService {
             config: config
         )
 
+        // Sync immediately after submitting
+        syncFromStreamManager()
         onHistoryRevalidate?()
     }
 
@@ -119,7 +192,7 @@ public final class ChatService {
         let config = assistant?.config
 
         if let checkpoint = checkpoint {
-            streamManager.submit(
+            _streamManager.submit(
                 input: nil,
                 optimisticValues: optimisticMessages != nil ? { prev in
                     var updated = prev
@@ -142,30 +215,33 @@ public final class ChatService {
                 }
             ])
 
-            streamManager.submit(
+            _streamManager.submit(
                 input: input,
                 config: config,
                 interruptBefore: ["tools"]
             )
         }
+        syncFromStreamManager()
     }
 
     public func continueStream(hasTaskToolCall: Bool = false) {
         var config = assistant?.config ?? JSON([:])
         config["recursion_limit"] = 100
 
-        streamManager.submit(
+        _streamManager.submit(
             input: nil,
             config: config,
             interruptBefore: hasTaskToolCall ? nil : ["tools"],
             interruptAfter: hasTaskToolCall ? ["tools"] : nil
         )
 
+        syncFromStreamManager()
         onHistoryRevalidate?()
     }
 
     public func stopStream() {
-        streamManager.stop()
+        _streamManager.stop()
+        syncFromStreamManager()
     }
 
     public func resumeInterrupt(value: JSON) {
@@ -173,11 +249,12 @@ public final class ChatService {
             "resume": value.object
         ])
 
-        streamManager.submit(
+        _streamManager.submit(
             input: nil,
             command: command
         )
 
+        syncFromStreamManager()
         onHistoryRevalidate?()
     }
 
@@ -187,11 +264,12 @@ public final class ChatService {
             "update": NSNull()
         ])
 
-        streamManager.submit(
+        _streamManager.submit(
             input: nil,
             command: command
         )
 
+        syncFromStreamManager()
         onHistoryRevalidate?()
     }
 
@@ -265,7 +343,7 @@ public final class ChatService {
         }
 
         if let assistant = assistant {
-            streamManager.setAssistantId(assistant.assistantId)
+            _streamManager.setAssistantId(assistant.assistantId)
         }
     }
 }

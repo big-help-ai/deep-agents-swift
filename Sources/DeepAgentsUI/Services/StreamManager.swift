@@ -26,6 +26,7 @@ public final class StreamManager {
     public var onFinish: (() -> Void)?
     public var onError: ((Error) -> Void)?
     public var onCreated: (() -> Void)?
+    public var onStateChange: (() -> Void)?
 
     // MARK: - Initialization
 
@@ -111,7 +112,6 @@ public final class StreamManager {
 
                 for try await event in stream {
                     if Task.isCancelled { break }
-
                     await MainActor.run {
                         self.processEvent(event)
                     }
@@ -210,14 +210,61 @@ public final class StreamManager {
             }
 
         case .messages, .messagesTuple:
-            // Handle message updates
-            if let msgArray = event.data.array {
-                for msgJson in msgArray {
-                    let msg = Message(json: msgJson)
-                    if let idx = messages.firstIndex(where: { $0.id == msg.id }) {
-                        messages[idx] = msg
+            // Handle streaming message updates
+            // messages-tuple format: [[message_chunk, metadata], ...] or just message_chunk
+            // Each chunk has incremental content that should be accumulated
+            // Note: LangGraph streaming uses unique IDs per chunk, so we track by the last AI message position
+            if let dataArray = event.data.array {
+                for item in dataArray {
+                    // Handle tuple format [message_chunk, metadata] or just message_chunk
+                    let msgJson: JSON
+                    if item.array != nil && item.array!.count >= 1 {
+                        // Tuple format: [message_chunk, metadata]
+                        msgJson = item[0]
                     } else {
-                        messages.append(msg)
+                        // Direct message format
+                        msgJson = item
+                    }
+
+                    let chunkId = msgJson["id"].stringValue
+                    let chunkType = msgJson["type"].stringValue
+                    let chunkContent = msgJson["content"].stringValue
+
+                    // Skip empty content
+                    if chunkContent.isEmpty {
+                        continue
+                    }
+
+                    // Determine if this is an AI message chunk
+                    // LangGraph uses types like "AIMessageChunk", "ai", etc.
+                    let isAIChunk = chunkType.lowercased().contains("ai") ||
+                                    chunkType == "assistant" ||
+                                    chunkId.hasPrefix("run-") ||
+                                    chunkId.hasPrefix("lc_run")
+
+                    if isAIChunk {
+                        // For AI streaming, find the last AI message and append to it
+                        // This handles the case where each chunk has a different ID
+                        if let lastAIIdx = messages.lastIndex(where: { $0.type == .ai }) {
+                            // Append to existing AI message
+                            let existingContent = messages[lastAIIdx].contentString
+                            messages[lastAIIdx].content = JSON(existingContent + chunkContent)
+                        } else {
+                            // Create new AI message for first chunk
+                            let newMsg = Message(
+                                id: chunkId,
+                                type: .ai,
+                                content: JSON(chunkContent)
+                            )
+                            messages.append(newMsg)
+                        }
+                    } else {
+                        // For non-AI messages, use ID matching or create new
+                        if let idx = messages.firstIndex(where: { $0.id == chunkId }) {
+                            messages[idx] = Message(json: msgJson)
+                        } else if !chunkId.isEmpty {
+                            messages.append(Message(json: msgJson))
+                        }
                     }
                 }
                 values.messages = messages
@@ -236,7 +283,14 @@ public final class StreamManager {
         case .end:
             // Stream ended
             break
+
+        case .metadata, .debug, .pending, .message, .unknown:
+            // Informational events - no processing needed
+            break
         }
+
+        // Notify listeners of state change
+        onStateChange?()
     }
 }
 

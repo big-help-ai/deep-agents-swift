@@ -86,7 +86,8 @@ public actor LangGraphClient {
                 "sort_order": sortOrder
             ]
 
-            if let status = status {
+            // Don't include status filter when .all is specified (returns all threads)
+            if let status = status, status != .all {
                 body["status"] = status.rawValue
             }
 
@@ -298,27 +299,70 @@ public actor LangGraphClient {
 
                         let (bytes, response) = try await client.session.bytes(for: request)
 
-                        guard let httpResponse = response as? HTTPURLResponse,
-                              (200...299).contains(httpResponse.statusCode) else {
-                            throw LangGraphError.streamError("Invalid response")
+                        guard let httpResponse = response as? HTTPURLResponse else {
+                            throw LangGraphError.streamError("Invalid response - not HTTP")
                         }
 
-                        var buffer = ""
+
+                        guard (200...299).contains(httpResponse.statusCode) else {
+                            throw LangGraphError.streamError("HTTP error: \(httpResponse.statusCode)")
+                        }
+
+                        var lineBuffer = Data()
+                        var eventLines: [String] = []
+                        var lastWasCR = false
 
                         for try await byte in bytes {
-                            let char = Character(UnicodeScalar(byte))
-                            buffer.append(char)
+                            // Handle \r\n sequences - skip \n after \r
+                            if byte == 0x0D { // \r
+                                lastWasCR = true
+                                continue
+                            }
 
-                            // SSE format: "event: <type>\ndata: <json>\n\n"
-                            if buffer.hasSuffix("\n\n") {
-                                let event = parseSSEEvent(buffer)
-                                if let event = event {
-                                    continuation.yield(event)
-                                    if event.type == .end {
-                                        break
+                            if byte == 0x0A { // \n
+                                // End of line - decode the line buffer as UTF-8
+                                let line = String(data: lineBuffer, encoding: .utf8) ?? ""
+                                lineBuffer = Data()
+                                lastWasCR = false
+
+                                if line.isEmpty {
+                                    // Blank line = end of event
+                                    if !eventLines.isEmpty {
+                                        let event = parseSSELines(eventLines)
+                                        if let event = event {
+                                            continuation.yield(event)
+                                            if event.type == .end {
+                                                break
+                                            }
+                                        }
+                                        eventLines = []
+                                    }
+                                } else {
+                                    // Non-empty line - accumulate
+                                    eventLines.append(line)
+                                }
+                            } else {
+                                // If we had a \r without \n, treat it as line ending
+                                if lastWasCR {
+                                    let line = String(data: lineBuffer, encoding: .utf8) ?? ""
+                                    lineBuffer = Data()
+                                    if line.isEmpty {
+                                        if !eventLines.isEmpty {
+                                            let event = parseSSELines(eventLines)
+                                            if let event = event {
+                                                continuation.yield(event)
+                                                if event.type == .end {
+                                                    break
+                                                }
+                                            }
+                                            eventLines = []
+                                        }
+                                    } else {
+                                        eventLines.append(line)
                                     }
                                 }
-                                buffer = ""
+                                lastWasCR = false
+                                lineBuffer.append(byte)
                             }
                         }
 
@@ -330,26 +374,32 @@ public actor LangGraphClient {
             }
         }
 
-        private func parseSSEEvent(_ text: String) -> StreamEvent? {
-            let lines = text.components(separatedBy: "\n")
+        private func parseSSELines(_ lines: [String]) -> StreamEvent? {
             var eventType: String?
-            var dataLine: String?
+            var dataLines: [String] = []
 
             for line in lines {
                 if line.hasPrefix("event:") {
                     eventType = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
                 } else if line.hasPrefix("data:") {
-                    dataLine = String(line.dropFirst(5))
+                    // Accumulate all data lines (SSE can have multiple data: lines)
+                    let dataContent = String(line.dropFirst(5))
+                    // Trim leading space if present (standard SSE format is "data: value")
+                    dataLines.append(dataContent.hasPrefix(" ") ? String(dataContent.dropFirst()) : dataContent)
                 }
+                // Ignore other fields like "id:" and "retry:" for now
             }
 
-            guard let eventType = eventType,
-                  let dataLine = dataLine,
-                  let type = StreamEventType(rawValue: eventType) else {
-                return nil
-            }
+            // Default event type is "message" per SSE spec
+            let effectiveEventType = eventType ?? "message"
 
-            let data = JSON(parseJSON: dataLine)
+            // Use .unknown for unrecognized event types instead of failing
+            let type = StreamEventType(rawValue: effectiveEventType) ?? .unknown
+
+            // Concatenate all data lines
+            let dataString = dataLines.joined()
+            let data = JSON(parseJSON: dataString)
+
             return StreamEvent(type: type, data: data)
         }
 
@@ -361,6 +411,178 @@ public actor LangGraphClient {
 
             _ = try await client.performRequest(request)
         }
+
+        /// Create a non-streaming run
+        public func create(
+            threadId: String,
+            assistantId: String,
+            input: JSON? = nil,
+            command: [String: Any]? = nil,
+            config: JSON? = nil,
+            interruptBefore: [String]? = nil,
+            interruptAfter: [String]? = nil,
+            metadata: [String: Any]? = nil,
+            multitaskStrategy: String? = nil
+        ) async throws -> Run {
+            var body: [String: Any] = [
+                "assistant_id": assistantId
+            ]
+
+            if let input = input {
+                body["input"] = input.object
+            }
+
+            if let command = command {
+                body["command"] = command
+            }
+
+            if let config = config {
+                body["config"] = config.object
+            }
+
+            if let interruptBefore = interruptBefore {
+                body["interrupt_before"] = interruptBefore
+            }
+
+            if let interruptAfter = interruptAfter {
+                body["interrupt_after"] = interruptAfter
+            }
+
+            if let metadata = metadata {
+                body["metadata"] = metadata
+            }
+
+            if let multitaskStrategy = multitaskStrategy {
+                body["multitask_strategy"] = multitaskStrategy
+            }
+
+            let request = await client.buildRequest(
+                path: "/threads/\(threadId)/runs",
+                method: "POST",
+                body: JSON(body)
+            )
+
+            let result = try await client.performRequest(request)
+            return Run(json: result)
+        }
+    }
+
+    // MARK: - Deployment Info
+
+    /// Fetch deployment info from the /info endpoint
+    public func fetchDeploymentInfo() async throws -> DeploymentInfoResponse {
+        let request = buildRequest(path: "/info")
+        let result = try await performRequest(request)
+        return DeploymentInfoResponse(json: result)
+    }
+
+    // MARK: - Store API
+
+    public var store: StoreAPI {
+        StoreAPI(client: self)
+    }
+
+    public struct StoreAPI: Sendable {
+        let client: LangGraphClient
+
+        /// List namespaces with optional prefix filter
+        public func listNamespaces(
+            prefix: [String]? = nil,
+            suffix: [String]? = nil,
+            maxDepth: Int? = nil,
+            limit: Int = 100,
+            offset: Int = 0
+        ) async throws -> [[String]] {
+            var body: [String: Any] = [
+                "limit": limit,
+                "offset": offset
+            ]
+
+            if let prefix = prefix {
+                body["prefix"] = prefix
+            }
+
+            if let suffix = suffix {
+                body["suffix"] = suffix
+            }
+
+            if let maxDepth = maxDepth {
+                body["max_depth"] = maxDepth
+            }
+
+            let request = await client.buildRequest(
+                path: "/store/namespaces",
+                method: "POST",
+                body: JSON(body)
+            )
+
+            let result = try await client.performRequest(request)
+            return result.arrayValue.map { $0.arrayValue.map { $0.stringValue } }
+        }
+
+        /// Search for items in the store
+        public func searchItems(
+            namespacePrefix: [String],
+            filter: [String: Any]? = nil,
+            limit: Int = 100,
+            offset: Int = 0
+        ) async throws -> [StoreItem] {
+            var body: [String: Any] = [
+                "namespace_prefix": namespacePrefix,
+                "limit": limit,
+                "offset": offset
+            ]
+
+            if let filter = filter {
+                body["filter"] = filter
+            }
+
+            let request = await client.buildRequest(
+                path: "/store/items/search",
+                method: "POST",
+                body: JSON(body)
+            )
+
+            let result = try await client.performRequest(request)
+            return result["items"].arrayValue.map { StoreItem(json: $0) }
+        }
+
+        /// Get a specific item by namespace and key
+        public func getItem(namespace: [String], key: String) async throws -> StoreItem? {
+            let request = await client.buildRequest(
+                path: "/store/items",
+                queryParams: [
+                    "namespace": namespace.joined(separator: ","),
+                    "key": key
+                ]
+            )
+
+            let result = try await client.performRequest(request)
+            guard result.exists() && result != JSON.null else { return nil }
+            return StoreItem(json: result)
+        }
+    }
+}
+
+// MARK: - Store Item
+
+public struct StoreItem: Identifiable, Sendable {
+    public let namespace: [String]
+    public let key: String
+    public let value: JSON
+    public let createdAt: Date?
+    public let updatedAt: Date?
+
+    public var id: String {
+        (namespace + [key]).joined(separator: "/")
+    }
+
+    public init(json: JSON) {
+        self.namespace = json["namespace"].arrayValue.map { $0.stringValue }
+        self.key = json["key"].stringValue
+        self.value = json["value"]
+        self.createdAt = ISO8601DateFormatter().date(from: json["created_at"].stringValue)
+        self.updatedAt = ISO8601DateFormatter().date(from: json["updated_at"].stringValue)
     }
 }
 

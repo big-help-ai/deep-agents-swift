@@ -53,14 +53,23 @@ public struct ChatInterfaceView: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                hideKeyboard()
+            }
             .onChange(of: chatService.messages.count) { _, _ in
-                if let lastMessage = chatService.messages.last {
+                // Scroll to last processed message (not raw message, which might be a tool message)
+                if let lastProcessed = processedMessages.last {
                     withAnimation {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        proxy.scrollTo(lastProcessed.message.id, anchor: .bottom)
                     }
                 }
             }
         }
+    }
+
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private var loadingView: some View {
@@ -93,6 +102,14 @@ public struct ChatInterfaceView: View {
                     .onSubmit {
                         sendMessage()
                     }
+                    .toolbar {
+                        ToolbarItemGroup(placement: .keyboard) {
+                            Spacer()
+                            Button("Done") {
+                                hideKeyboard()
+                            }
+                        }
+                    }
 
                 Button {
                     if chatService.isLoading {
@@ -101,17 +118,10 @@ public struct ChatInterfaceView: View {
                         sendMessage()
                     }
                 } label: {
-                    if chatService.isLoading {
-                        HStack(spacing: 4) {
-                            Image(systemName: "stop.fill")
-                            Text("Stop")
-                        }
-                    } else {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up")
-                            Text("Send")
-                        }
-                    }
+                    Image(systemName: chatService.isLoading ? "stop.fill" : "arrow.up")
+                        .frame(width: 20, height: 20)
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 4)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(chatService.isLoading ? .red : .blue)
@@ -292,7 +302,7 @@ public struct ChatInterfaceView: View {
     // MARK: - Helpers
 
     private var submitDisabled: Bool {
-        chatService.isLoading || chatService.assistant == nil
+        chatService.isLoading
     }
 
     private var hasTasks: Bool {
@@ -365,47 +375,58 @@ public struct ChatInterfaceView: View {
 
         for message in chatService.messages {
             if message.type == .ai {
-                var toolCalls: [ToolCall] = []
+                var toolCallsDict: [String: ToolCall] = [:]
 
                 // Extract tool calls from additional_kwargs
                 if let additionalKwargs = message.additionalKwargs,
                    let calls = additionalKwargs["tool_calls"].array {
                     for call in calls {
-                        let toolCall = ToolCall(
-                            id: call["id"].stringValue,
-                            name: call["function"]["name"].stringValue,
-                            args: call["function"]["arguments"],
-                            status: chatService.interrupt != nil ? .interrupted : .pending
-                        )
-                        toolCalls.append(toolCall)
+                        let id = call["id"].stringValue
+                        if !id.isEmpty && toolCallsDict[id] == nil {
+                            let toolCall = ToolCall(
+                                id: id,
+                                name: call["function"]["name"].stringValue,
+                                args: call["function"]["arguments"],
+                                status: chatService.interrupt != nil ? .interrupted : .pending
+                            )
+                            toolCallsDict[id] = toolCall
+                        }
                     }
                 }
 
                 // Extract tool calls from tool_calls property
                 if let calls = message.toolCalls {
                     for call in calls where call["name"].stringValue != "" {
-                        let toolCall = ToolCall(
-                            id: call["id"].stringValue,
-                            name: call["name"].stringValue,
-                            args: call["args"],
-                            status: chatService.interrupt != nil ? .interrupted : .pending
-                        )
-                        toolCalls.append(toolCall)
+                        let id = call["id"].stringValue
+                        if !id.isEmpty && toolCallsDict[id] == nil {
+                            let toolCall = ToolCall(
+                                id: id,
+                                name: call["name"].stringValue,
+                                args: call["args"],
+                                status: chatService.interrupt != nil ? .interrupted : .pending
+                            )
+                            toolCallsDict[id] = toolCall
+                        }
                     }
                 }
 
                 // Extract tool_use blocks from content array
                 if let contentArray = message.content.array {
                     for block in contentArray where block["type"].stringValue == "tool_use" {
-                        let toolCall = ToolCall(
-                            id: block["id"].stringValue,
-                            name: block["name"].stringValue,
-                            args: block["input"],
-                            status: chatService.interrupt != nil ? .interrupted : .pending
-                        )
-                        toolCalls.append(toolCall)
+                        let id = block["id"].stringValue
+                        if !id.isEmpty && toolCallsDict[id] == nil {
+                            let toolCall = ToolCall(
+                                id: id,
+                                name: block["name"].stringValue,
+                                args: block["input"],
+                                status: chatService.interrupt != nil ? .interrupted : .pending
+                            )
+                            toolCallsDict[id] = toolCall
+                        }
                     }
                 }
+
+                let toolCalls = Array(toolCallsDict.values)
 
                 messageMap[message.id] = ProcessedMessage(
                     message: message,

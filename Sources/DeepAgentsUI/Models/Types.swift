@@ -123,11 +123,24 @@ public struct TodoItem: Identifiable, Sendable {
 
 // MARK: - Thread
 
-public enum ThreadStatus: String, Sendable {
+public enum ThreadStatus: String, Sendable, CaseIterable {
     case idle
     case busy
     case interrupted
     case error
+    case humanResponseNeeded = "human_response_needed"
+    case all // Used for filtering to show all threads
+
+    public var displayName: String {
+        switch self {
+        case .idle: return "Idle"
+        case .busy: return "Busy"
+        case .error: return "Error"
+        case .interrupted: return "Interrupted"
+        case .humanResponseNeeded: return "Human Response Needed"
+        case .all: return "All"
+        }
+    }
 }
 
 public struct Thread: Identifiable, Sendable {
@@ -388,6 +401,11 @@ public enum StreamEventType: String, Sendable {
     case custom
     case error
     case end
+    case metadata
+    case debug
+    case pending
+    case message // Default SSE event type
+    case unknown // For unrecognized event types
 }
 
 public struct StreamEvent: Sendable {
@@ -397,5 +415,90 @@ public struct StreamEvent: Sendable {
     public init(type: StreamEventType, data: JSON) {
         self.type = type
         self.data = data
+    }
+}
+
+// MARK: - Deployment Info
+
+public struct DeploymentInfoResponse: Sendable {
+    public struct Flags: Sendable {
+        public let assistants: Bool
+        public let crons: Bool
+        public let langsmith: Bool
+
+        public init(assistants: Bool, crons: Bool, langsmith: Bool) {
+            self.assistants = assistants
+            self.crons = crons
+            self.langsmith = langsmith
+        }
+
+        public init(json: JSON) {
+            self.assistants = json["assistants"].boolValue
+            self.crons = json["crons"].boolValue
+            self.langsmith = json["langsmith"].boolValue
+        }
+    }
+
+    public struct Host: Sendable {
+        public let kind: String
+        public let projectId: String?
+        public let revisionId: String
+        public let tenantId: String?
+
+        public init(kind: String, projectId: String?, revisionId: String, tenantId: String?) {
+            self.kind = kind
+            self.projectId = projectId
+            self.revisionId = revisionId
+            self.tenantId = tenantId
+        }
+
+        public init(json: JSON) {
+            self.kind = json["kind"].stringValue
+            self.projectId = json["project_id"].string
+            self.revisionId = json["revision_id"].stringValue
+            self.tenantId = json["tenant_id"].string
+        }
+    }
+
+    public let flags: Flags
+    public let host: Host
+
+    public init(flags: Flags, host: Host) {
+        self.flags = flags
+        self.host = host
+    }
+
+    public init(json: JSON) {
+        self.flags = Flags(json: json["flags"])
+        self.host = Host(json: json["host"])
+    }
+}
+
+// MARK: - Run
+
+public struct Run: Identifiable, Sendable {
+    public let id: String
+    public let threadId: String
+    public let assistantId: String
+    public let status: String
+    public let createdAt: Date?
+    public let updatedAt: Date?
+
+    public init(id: String, threadId: String, assistantId: String, status: String, createdAt: Date? = nil, updatedAt: Date? = nil) {
+        self.id = id
+        self.threadId = threadId
+        self.assistantId = assistantId
+        self.status = status
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public init(json: JSON) {
+        self.id = json["run_id"].stringValue
+        self.threadId = json["thread_id"].stringValue
+        self.assistantId = json["assistant_id"].stringValue
+        self.status = json["status"].stringValue
+        self.createdAt = ISO8601DateFormatter().date(from: json["created_at"].stringValue)
+        self.updatedAt = ISO8601DateFormatter().date(from: json["updated_at"].stringValue)
     }
 }
