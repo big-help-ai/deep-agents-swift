@@ -285,7 +285,7 @@ extension CallManager: CXProviderDelegate {
 
     nonisolated public func provider(_: CXProvider, didActivate session: AVAudioSession) {
         do {
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
             try AudioManager.shared.setEngineAvailability(.default)
         } catch {
             // Log error
@@ -360,7 +360,7 @@ extension CallManager: PKPushRegistryDelegate {
         /// NOTE: Setting .playAndRecord here for background mode compatibility
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers, .allowBluetooth, .allowBluetoothA2DP])
         } catch {
             // Log error
         }
