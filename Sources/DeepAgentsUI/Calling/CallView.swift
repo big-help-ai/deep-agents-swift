@@ -116,11 +116,6 @@ public struct CallView: View {
                                 await callManager.startCall(handle: "user1")
                             }
                         }
-                        Button("Simulate incoming call") {
-                            Task {
-                                try await callManager.reportIncomingCallAsync(from: "user2", callerName: "Incoming Caller")
-                            }
-                        }
                     }
                 }
             }
