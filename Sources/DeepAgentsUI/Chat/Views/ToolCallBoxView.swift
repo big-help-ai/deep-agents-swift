@@ -5,8 +5,7 @@ import SwiftyJSON
 
 public struct ToolCallBoxView: View {
     let toolCall: ToolCall
-    let actionRequest: ActionRequest?
-    let reviewConfig: ReviewConfig?
+    let interrupt: HumanInterrupt?
     let onResume: (JSON) -> Void
     let isLoading: Bool
 
@@ -15,14 +14,12 @@ public struct ToolCallBoxView: View {
 
     public init(
         toolCall: ToolCall,
-        actionRequest: ActionRequest? = nil,
-        reviewConfig: ReviewConfig? = nil,
+        interrupt: HumanInterrupt? = nil,
         onResume: @escaping (JSON) -> Void = { _ in },
         isLoading: Bool = false
     ) {
         self.toolCall = toolCall
-        self.actionRequest = actionRequest
-        self.reviewConfig = reviewConfig
+        self.interrupt = interrupt
         self.onResume = onResume
         self.isLoading = isLoading
     }
@@ -110,10 +107,9 @@ public struct ToolCallBoxView: View {
                     }
 
                     // Approval section
-                    if toolCall.status == .interrupted, actionRequest != nil {
+                    if toolCall.status == .interrupted, let interrupt = interrupt {
                         ToolApprovalInterruptView(
-                            actionRequest: actionRequest!,
-                            reviewConfig: reviewConfig,
+                            interrupt: interrupt,
                             onResume: onResume,
                             isLoading: isLoading
                         )

@@ -11,10 +11,12 @@ import SwiftUI
 public struct CallView: View {
     @ObservedObject var callManager: CallManager
     @ObservedObject var room: Room
+    let allowGraphSelection: Bool
 
-    public init(callManager: CallManager) {
+    public init(callManager: CallManager, allowGraphSelection: Bool = true) {
         self.callManager = callManager
         self.room = callManager.room
+        self.allowGraphSelection = allowGraphSelection
     }
 
     public var body: some View {
@@ -78,7 +80,7 @@ public struct CallView: View {
                     }
                 }
 
-                if !callManager.availableGraphs.isEmpty {
+                if allowGraphSelection && !callManager.availableGraphs.isEmpty {
                     Section("Graph") {
                         Picker("Graph", selection: $callManager.selectedGraphName) {
                             ForEach(callManager.availableGraphs, id: \.self) { graph in
@@ -113,12 +115,7 @@ public struct CallView: View {
                     } else {
                         Button("Start call") {
                             Task {
-                                await callManager.startCall(handle: "user1")
-                            }
-                        }
-                        Button("Simulate incoming call") {
-                            Task {
-                                try await callManager.reportIncomingCallAsync(from: "user2", callerName: "Incoming Caller")
+                                await callManager.startCall(handle: "user1", threadId: nil)
                             }
                         }
                     }

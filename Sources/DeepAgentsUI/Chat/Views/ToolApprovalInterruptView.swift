@@ -4,8 +4,7 @@ import SwiftyJSON
 // MARK: - Tool Approval Interrupt View
 
 public struct ToolApprovalInterruptView: View {
-    let actionRequest: ActionRequest
-    let reviewConfig: ReviewConfig?
+    let interrupt: HumanInterrupt
     let onResume: (JSON) -> Void
     let isLoading: Bool
 
@@ -22,13 +21,11 @@ public struct ToolApprovalInterruptView: View {
     }
 
     public init(
-        actionRequest: ActionRequest,
-        reviewConfig: ReviewConfig? = nil,
+        interrupt: HumanInterrupt,
         onResume: @escaping (JSON) -> Void,
         isLoading: Bool = false
     ) {
-        self.actionRequest = actionRequest
-        self.reviewConfig = reviewConfig
+        self.interrupt = interrupt
         self.onResume = onResume
         self.isLoading = isLoading
     }
@@ -46,7 +43,7 @@ public struct ToolApprovalInterruptView: View {
             }
 
             // Description
-            if let description = actionRequest.description {
+            if let description = interrupt.description {
                 Text(description)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -57,7 +54,7 @@ public struct ToolApprovalInterruptView: View {
                 Text("Tool:")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(actionRequest.name)
+                Text(interrupt.actionRequest.action)
                     .font(.caption)
                     .fontWeight(.medium)
             }
@@ -82,7 +79,7 @@ public struct ToolApprovalInterruptView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Text(actionRequest.args.rawString(.utf8, options: [.prettyPrinted]) ?? "{}")
+                    Text(interrupt.actionRequest.args.rawString(.utf8, options: [.prettyPrinted]) ?? "{}")
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .padding(8)
@@ -149,7 +146,7 @@ public struct ToolApprovalInterruptView: View {
                     .disabled(isLoading)
                 } else {
                     // Main action buttons
-                    if canApprove {
+                    if interrupt.config.allowAccept {
                         Button {
                             approve()
                         } label: {
@@ -165,7 +162,7 @@ public struct ToolApprovalInterruptView: View {
                         .disabled(isLoading)
                     }
 
-                    if canReject {
+                    if interrupt.config.allowReject {
                         Button("Reject") {
                             showRejectionInput = true
                         }
@@ -174,9 +171,9 @@ public struct ToolApprovalInterruptView: View {
                         .disabled(isLoading)
                     }
 
-                    if canEdit {
+                    if interrupt.config.allowEdit {
                         Button("Edit") {
-                            editedArgs = actionRequest.args.rawString(.utf8, options: [.prettyPrinted]) ?? "{}"
+                            editedArgs = interrupt.actionRequest.args.rawString(.utf8, options: [.prettyPrinted]) ?? "{}"
                             isEditMode = true
                         }
                         .buttonStyle(.bordered)
@@ -194,28 +191,13 @@ public struct ToolApprovalInterruptView: View {
         )
     }
 
-    // MARK: - Helpers
-
-    private var canApprove: Bool {
-        guard let allowed = reviewConfig?.allowedDecisions else { return true }
-        return allowed.contains("approve")
-    }
-
-    private var canReject: Bool {
-        guard let allowed = reviewConfig?.allowedDecisions else { return true }
-        return allowed.contains("reject")
-    }
-
-    private var canEdit: Bool {
-        guard let allowed = reviewConfig?.allowedDecisions else { return true }
-        return allowed.contains("edit")
-    }
+    // MARK: - Actions
 
     private func approve() {
         actionInProgress = .approving
 
         let response = JSON([
-            "action": actionRequest.name,
+            "action": interrupt.actionRequest.action,
             "decision": "approve"
         ])
 
@@ -226,7 +208,7 @@ public struct ToolApprovalInterruptView: View {
         actionInProgress = .rejecting
 
         var responseDict: [String: Any] = [
-            "action": actionRequest.name,
+            "action": interrupt.actionRequest.action,
             "decision": "reject"
         ]
 
@@ -241,11 +223,10 @@ public struct ToolApprovalInterruptView: View {
     private func saveEdit() {
         actionInProgress = .saving
 
-        // Parse the edited args
         let parsedArgs = JSON(parseJSON: editedArgs)
 
         let response = JSON([
-            "action": actionRequest.name,
+            "action": interrupt.actionRequest.action,
             "decision": "approve",
             "args": parsedArgs.object
         ] as [String: Any])

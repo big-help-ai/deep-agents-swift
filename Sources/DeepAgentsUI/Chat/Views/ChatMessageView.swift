@@ -7,23 +7,20 @@ public struct ChatMessageView: View {
     let message: Message
     let toolCalls: [ToolCall]
     let isLoading: Bool
-    let actionRequestsMap: [String: ActionRequest]
-    let reviewConfigsMap: [String: ReviewConfig]
+    let interruptsMap: [String: HumanInterrupt]
     let onResumeInterrupt: (JSON) -> Void
 
     public init(
         message: Message,
         toolCalls: [ToolCall],
         isLoading: Bool = false,
-        actionRequestsMap: [String: ActionRequest] = [:],
-        reviewConfigsMap: [String: ReviewConfig] = [:],
+        interruptsMap: [String: HumanInterrupt] = [:],
         onResumeInterrupt: @escaping (JSON) -> Void = { _ in }
     ) {
         self.message = message
         self.toolCalls = toolCalls
         self.isLoading = isLoading
-        self.actionRequestsMap = actionRequestsMap
-        self.reviewConfigsMap = reviewConfigsMap
+        self.interruptsMap = interruptsMap
         self.onResumeInterrupt = onResumeInterrupt
     }
 
@@ -84,8 +81,7 @@ public struct ChatMessageView: View {
             ForEach(nonTaskToolCalls) { toolCall in
                 ToolCallBoxView(
                     toolCall: toolCall,
-                    actionRequest: actionRequestsMap[toolCall.name],
-                    reviewConfig: reviewConfigsMap[toolCall.name],
+                    interrupt: interruptsMap[toolCall.name],
                     onResume: onResumeInterrupt,
                     isLoading: isLoading
                 )

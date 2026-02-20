@@ -7,22 +7,14 @@ public struct AgentChatView: View {
     @Environment(ThreadService.self) private var threadService
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    let config: StandaloneConfig
-    @Binding var showConfigDialog: Bool
-    let onSaveConfig: (StandaloneConfig) -> Void
+    let assistantId: String
 
     @State private var showThreadList = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var hasInitialized = false
 
-    public init(
-        config: StandaloneConfig,
-        showConfigDialog: Binding<Bool>,
-        onSaveConfig: @escaping (StandaloneConfig) -> Void
-    ) {
-        self.config = config
-        self._showConfigDialog = showConfigDialog
-        self.onSaveConfig = onSaveConfig
+    public init(assistantId: String) {
+        self.assistantId = assistantId
     }
 
     public var body: some View {
@@ -37,7 +29,7 @@ public struct AgentChatView: View {
             guard !hasInitialized else { return }
             hasInitialized = true
 
-            await chatService.fetchAssistant(assistantId: config.assistantId)
+            await chatService.fetchAssistant(assistantId: assistantId)
             await threadService.refresh()
 
             chatService.onHistoryRevalidate = {

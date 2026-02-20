@@ -119,14 +119,6 @@ public final class DeepAgentsUI: @unchecked Sendable {
         handler?.handleEvent(event)
     }
 
-    // MARK: - Standalone Config
-
-    /// Save standalone configuration to UserDefaults.
-    /// Used by the standalone DeepAgentsApp.
-    public static func saveConfig(_ config: StandaloneConfig) {
-        ConfigManager.shared.saveConfig(config)
-    }
-
     // MARK: - LangGraph Client
 
     /// Create a LangGraphClient configured with the current settings.
@@ -134,7 +126,7 @@ public final class DeepAgentsUI: @unchecked Sendable {
     public static func createLangGraphClient() throws -> LangGraphClient {
         let config = try configuration
         return LangGraphClient(
-            apiUrl: config.langGraphDeploymentUrl,
+            apiUrl: config.langsmithAgentServerUrl,
             apiKey: config.langGraphApiKey
         )
     }

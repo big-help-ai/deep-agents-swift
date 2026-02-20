@@ -146,6 +146,11 @@ public final class ChatService {
         }
     }
 
+    public func reloadThread() {
+        guard let threadId = threadId else { return }
+        _streamManager.reloadThread(threadId)
+    }
+
     // MARK: - Message Operations
 
     public func sendMessage(_ content: String) {
@@ -167,6 +172,9 @@ public final class ChatService {
 
         var config = assistant?.config ?? JSON([:])
         config["recursion_limit"] = 100
+        var configurable = config["configurable"].dictionaryObject ?? [:]
+        configurable["interaction_mode"] = "chat"
+        config["configurable"] = JSON(configurable)
 
         _streamManager.submit(
             input: input,
@@ -227,6 +235,9 @@ public final class ChatService {
     public func continueStream(hasTaskToolCall: Bool = false) {
         var config = assistant?.config ?? JSON([:])
         config["recursion_limit"] = 100
+        var configurable = config["configurable"].dictionaryObject ?? [:]
+        configurable["interaction_mode"] = "chat"
+        config["configurable"] = JSON(configurable)
 
         _streamManager.submit(
             input: nil,

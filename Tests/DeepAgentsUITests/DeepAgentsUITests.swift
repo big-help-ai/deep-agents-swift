@@ -68,27 +68,6 @@ final class DeepAgentsUITests: XCTestCase {
         XCTAssertEqual(todo.status, .inProgress)
     }
 
-    // MARK: - Config Tests
-
-    func testConfigSaveAndLoad() {
-        let config = StandaloneConfig(
-            deploymentUrl: "https://example.com",
-            assistantId: "test-assistant",
-            langsmithApiKey: "test-key"
-        )
-
-        ConfigManager.shared.saveConfig(config)
-        let loaded = ConfigManager.shared.getConfig()
-
-        XCTAssertNotNil(loaded)
-        XCTAssertEqual(loaded?.deploymentUrl, "https://example.com")
-        XCTAssertEqual(loaded?.assistantId, "test-assistant")
-        XCTAssertEqual(loaded?.langsmithApiKey, "test-key")
-
-        // Clean up
-        ConfigManager.shared.clearConfig()
-    }
-
     // MARK: - Utils Tests
 
     func testIsValidUUID() {

@@ -7,6 +7,7 @@ public protocol CallTokenProvider: Sendable {
     /// - Parameters:
     ///   - roomName: The name of the room to join
     ///   - graphName: The name of the LangGraph graph to use for the call
+    ///   - livekitDispatchAgentName: The name of the LiveKit dispatch agent
     /// - Returns: A LiveKit access token for the room
-    func fetchRoomToken(roomName: String, graphName: String) async throws -> String
+    func fetchRoomToken(roomName: String, graphName: String, livekitDispatchAgentName: String, threadId: String?) async throws -> String
 }

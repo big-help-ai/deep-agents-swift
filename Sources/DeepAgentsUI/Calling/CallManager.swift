@@ -26,6 +26,27 @@ public final class CallManager: NSObject, ObservableObject {
     @Published public var currentRoomName: String?
     @Published public var isMuted: Bool = false
     @Published public var selectedGraphName: String = ""
+    @Published public var livekitDispatchAgentName: String = ""
+    @Published public var threadId: String?
+
+    /// Audio level of the remote agent participant (0.0–1.0).
+    @Published public var remoteAudioLevel: Float = 0
+    /// Audio level of the local participant (0.0–1.0).
+    @Published public var localAudioLevel: Float = 0
+
+    /// When true, prevents auto-unmuting (e.g. while coding sessions are active).
+    /// Only suppresses unmuting; setting this while already unmuted won't mute the user.
+    public var suppressAutoUnmute: Bool = false {
+        didSet {
+            guard oldValue != suppressAutoUnmute else { return }
+            evaluateMuteState()
+        }
+    }
+    private var agentIsBusy: Bool = false
+
+    // MARK: - Audio Level Polling
+
+    private var audioLevelTimer: Timer?
 
     // MARK: - LiveKit
 
@@ -89,7 +110,9 @@ public final class CallManager: NSObject, ObservableObject {
 
     // MARK: - Call Control
 
-    public func startCall(handle: String) async {
+    public func startCall(handle: String, threadId: String? = nil) async {
+        print("[CallManager] startCall: threadId = \(threadId ?? "nil")")
+        self.threadId = threadId
         let callUUID = UUID()
 
         let handle = CXHandle(type: .generic, value: handle)
@@ -160,26 +183,29 @@ public final class CallManager: NSObject, ObservableObject {
 
 extension CallManager {
     /// Fetches a LiveKit room token using the configured CallTokenProvider.
-    func fetchRoomToken(roomName: String, graphName: String) async throws -> String {
+    func fetchRoomToken(roomName: String, graphName: String, livekitDispatchAgentName: String, threadId: String?) async throws -> String {
         guard let tokenProvider = DeepAgentsUI.callTokenProvider else {
             throw CallManagerError.notConfigured
         }
 
-        return try await tokenProvider.fetchRoomToken(roomName: roomName, graphName: graphName)
+        return try await tokenProvider.fetchRoomToken(roomName: roomName, graphName: graphName, livekitDispatchAgentName: livekitDispatchAgentName, threadId: threadId)
     }
 
-    func connectToRoom(graphName: String) async throws {
+    func connectToRoom(graphName: String, livekitDispatchAgentName: String) async throws {
         guard let config = try? DeepAgentsUI.configuration,
               let serverUrl = config.liveKitServerUrl else {
+            logger.error("LiveKit server URL is nil — no host selected and no default configured")
             throw CallManagerError.liveKitNotAvailable
         }
+
+        print("[CallManager] connectToRoom: self.threadId = \(threadId ?? "nil"), graphName = \(graphName)")
 
         // Generate a unique room name based on timestamp
         let roomName = "room-\(Int(Date().timeIntervalSince1970))"
 
         // Fetch the token from backend
-        logger.info("Fetching room token for room: \(roomName), graph: \(graphName)")
-        let token = try await fetchRoomToken(roomName: roomName, graphName: graphName)
+        print("[CallManager] fetchRoomToken: room=\(roomName), graph=\(graphName), agent=\(livekitDispatchAgentName), threadId=\(threadId ?? "nil")")
+        let token = try await fetchRoomToken(roomName: roomName, graphName: graphName, livekitDispatchAgentName: livekitDispatchAgentName, threadId: threadId)
         livekitToken = token
 
         currentRoomName = roomName
@@ -191,6 +217,9 @@ extension CallManager {
         // Publish mic
         try await room.localParticipant.setMicrophone(enabled: true)
 
+        // Start polling audio levels
+        startAudioLevelPolling()
+
         // Emit event
         DeepAgentsUI.emit(.callStarted(roomName: roomName))
     }
@@ -198,11 +227,15 @@ extension CallManager {
     func disconnectFromRoom() async {
         let roomName = currentRoomName
 
+        stopAudioLevelPolling()
         await room.disconnect()
 
         currentRoomName = nil
         livekitToken = nil
         isMuted = false
+        agentIsBusy = false
+        remoteAudioLevel = 0
+        localAudioLevel = 0
 
         if let roomName {
             DeepAgentsUI.emit(.callEnded(roomName: roomName))
@@ -227,10 +260,11 @@ extension CallManager: CXProviderDelegate {
 
         Task { @MainActor in
             let graphName = self.selectedGraphName
+            let agentName = self.livekitDispatchAgentName
 
             do {
                 provider.reportOutgoingCall(with: action.callUUID, connectedAt: Date())
-                try await connectToRoom(graphName: graphName)
+                try await connectToRoom(graphName: graphName, livekitDispatchAgentName: agentName)
 
                 self.callState = .connected
                 action.fulfill()
@@ -245,9 +279,10 @@ extension CallManager: CXProviderDelegate {
     nonisolated public func provider(_: CXProvider, perform action: CXAnswerCallAction) {
         Task { @MainActor in
             let graphName = self.selectedGraphName
+            let agentName = self.livekitDispatchAgentName
 
             do {
-                try await connectToRoom(graphName: graphName)
+                try await connectToRoom(graphName: graphName, livekitDispatchAgentName: agentName)
                 self.callState = .connected
                 action.fulfill()
             } catch {
@@ -301,32 +336,74 @@ extension CallManager: CXProviderDelegate {
     }
 }
 
+// MARK: - Audio Level Polling
+
+extension CallManager {
+    func startAudioLevelPolling() {
+        stopAudioLevelPolling()
+        // Poll at ~20Hz for responsive visualization
+        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pollAudioLevels()
+            }
+        }
+    }
+
+    func stopAudioLevelPolling() {
+        audioLevelTimer?.invalidate()
+        audioLevelTimer = nil
+    }
+
+    private func pollAudioLevels() {
+        var newRemoteLevel: Float = 0
+        var newLocalLevel: Float = 0
+
+        for (_, participant) in room.remoteParticipants {
+            newRemoteLevel = max(newRemoteLevel, participant.audioLevel)
+        }
+        newLocalLevel = room.localParticipant.audioLevel
+
+        remoteAudioLevel = newRemoteLevel
+        localAudioLevel = newLocalLevel
+    }
+}
+
 // MARK: - RoomDelegate
 
 extension CallManager: RoomDelegate {
     nonisolated public func room(_ room: Room, participant: Participant, didUpdateAttributes _: [String: String]) {
-        // Check if this is an agent participant
         if let remoteParticipant = participant as? RemoteParticipant,
            remoteParticipant.kind == .agent
         {
             let agentState = remoteParticipant.agentState
-
-            // Mute user when agent is thinking or speaking, unmute otherwise
-            let shouldMute = (agentState == .thinking || agentState == .speaking)
-
+            let isBusy = (agentState == .thinking || agentState == .speaking)
             Task { @MainActor in
-                // Only update microphone if mute state actually changed
-                guard shouldMute != self.isMuted else { return }
-
-                self.isMuted = shouldMute
-
-                do {
-                    try await room.localParticipant.setMicrophone(enabled: !shouldMute)
-                } catch {
-                    // Log error
-                }
+                self.agentIsBusy = isBusy
+                self.evaluateMuteState()
             }
         }
+    }
+}
+
+// MARK: - Auto-Mute Logic
+
+extension CallManager {
+    /// Evaluates whether to mute/unmute based on agent state and active coding sessions.
+    private func evaluateMuteState() {
+        if agentIsBusy {
+            guard !isMuted else { return }
+            isMuted = true
+            Task {
+                try? await room.localParticipant.setMicrophone(enabled: false)
+            }
+        } else if !suppressAutoUnmute {
+            guard isMuted else { return }
+            isMuted = false
+            Task {
+                try? await room.localParticipant.setMicrophone(enabled: true)
+            }
+        }
+        // else: agent idle but sessions still running — stay in current mute state
     }
 }
 

@@ -53,6 +53,12 @@ public final class StreamManager {
         assistantId = id
     }
 
+    public func reloadThread(_ id: String) {
+        Task {
+            await fetchThreadState(threadId: id)
+        }
+    }
+
     public func submit(
         input: JSON?,
         optimisticValues: ((StateType) -> StateType)? = nil,
@@ -84,8 +90,10 @@ public final class StreamManager {
                 var currentThreadId = await MainActor.run { self.threadId }
 
                 if currentThreadId == nil {
+                    print("[StreamManager] Creating new thread...")
                     let thread = try await client.threads.create()
                     currentThreadId = thread["thread_id"].stringValue
+                    print("[StreamManager] Created thread: \(currentThreadId ?? "nil")")
 
                     await MainActor.run {
                         self.threadId = currentThreadId
@@ -99,6 +107,7 @@ public final class StreamManager {
                 }
 
                 // Start streaming
+                print("[StreamManager] Starting stream for thread=\(threadId) assistant=\(assistantId)")
                 let stream = await client.runs.stream(
                     threadId: threadId,
                     assistantId: assistantId,
@@ -110,18 +119,25 @@ public final class StreamManager {
                     interruptAfter: interruptAfter
                 )
 
+                var eventCount = 0
                 for try await event in stream {
-                    if Task.isCancelled { break }
+                    if Task.isCancelled {
+                        print("[StreamManager] Stream cancelled after \(eventCount) events")
+                        break
+                    }
+                    eventCount += 1
                     await MainActor.run {
                         self.processEvent(event)
                     }
                 }
 
+                print("[StreamManager] Stream completed with \(eventCount) events")
                 await MainActor.run {
                     self.isLoading = false
                     self.onFinish?()
                 }
             } catch {
+                print("[StreamManager] Stream error: \(error)")
                 if !Task.isCancelled {
                     await MainActor.run {
                         self.error = error
@@ -174,6 +190,7 @@ public final class StreamManager {
     }
 
     private func processEvent(_ event: StreamEvent) {
+        print("[StreamManager] Event: \(event.type) messages=\(messages.count)")
         switch event.type {
         case .values:
             let newValues = StateType(json: event.data)

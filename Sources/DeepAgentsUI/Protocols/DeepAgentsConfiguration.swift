@@ -3,9 +3,9 @@ import Foundation
 /// Configuration protocol for DeepAgentsUI.
 /// Implement this in your app to provide environment-specific settings.
 public protocol DeepAgentsConfiguration: Sendable {
-    /// The base URL for the LangGraph deployment.
-    /// Example: "https://api.langgraph.io/v1"
-    var langGraphDeploymentUrl: String { get }
+    /// The base URL for the LangSmith agent server.
+    /// Example: "https://api.smith.langchain.com"
+    var langsmithAgentServerUrl: String { get }
 
     /// Optional API key for LangGraph/LangSmith.
     /// If nil, the library will rely on AuthTokenProvider for authentication.

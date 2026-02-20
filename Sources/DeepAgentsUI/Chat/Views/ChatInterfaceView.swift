@@ -41,8 +41,7 @@ public struct ChatInterfaceView: View {
                                 message: item.message,
                                 toolCalls: item.toolCalls,
                                 isLoading: chatService.isLoading,
-                                actionRequestsMap: item.isLastMessage ? actionRequestsMap : [:],
-                                reviewConfigsMap: item.isLastMessage ? reviewConfigsMap : [:],
+                                interruptsMap: item.isLastMessage ? interruptsMap : [:],
                                 onResumeInterrupt: { value in
                                     chatService.resumeInterrupt(value: value)
                                 }
@@ -469,30 +468,32 @@ public struct ChatInterfaceView: View {
         return orderedIds.compactMap { messageMap[$0] }
     }
 
-    private var actionRequestsMap: [String: ActionRequest] {
+    private var interruptsMap: [String: HumanInterrupt] {
         guard let interrupt = chatService.interrupt,
               let actionRequests = interrupt.value["action_requests"].array else {
             return [:]
         }
 
-        var map: [String: ActionRequest] = [:]
+        // Build review configs lookup by action name
+        var reviewConfigsByName: [String: JSON] = [:]
+        if let reviewConfigs = interrupt.value["review_configs"].array {
+            for rc in reviewConfigs {
+                let actionName = rc["actionName"].stringValue
+                reviewConfigsByName[actionName] = rc
+            }
+        }
+
+        var map: [String: HumanInterrupt] = [:]
         for ar in actionRequests {
-            let request = ActionRequest(json: ar)
-            map[request.name] = request
-        }
-        return map
-    }
-
-    private var reviewConfigsMap: [String: ReviewConfig] {
-        guard let interrupt = chatService.interrupt,
-              let reviewConfigs = interrupt.value["review_configs"].array else {
-            return [:]
-        }
-
-        var map: [String: ReviewConfig] = [:]
-        for rc in reviewConfigs {
-            let config = ReviewConfig(json: rc)
-            map[config.actionName] = config
+            let request = ActionRequest(chatJSON: ar)
+            let reviewConfig = reviewConfigsByName[request.action]
+            let config = InterruptConfig(allowedDecisions: reviewConfig?["allowedDecisions"].array?.compactMap { $0.string })
+            let humanInterrupt = HumanInterrupt(
+                actionRequest: request,
+                config: config,
+                description: request.description
+            )
+            map[request.action] = humanInterrupt
         }
         return map
     }

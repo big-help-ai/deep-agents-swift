@@ -94,7 +94,7 @@ public final class InboxManager {
 
         let inbox = AgentInbox(
             graphId: graphId,
-            deploymentUrl: config.langGraphDeploymentUrl,
+            deploymentUrl: config.langsmithAgentServerUrl,
             name: nil,
             selected: true
         )
