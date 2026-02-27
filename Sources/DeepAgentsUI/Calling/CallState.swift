@@ -16,6 +16,13 @@ public enum CallState: Sendable {
             return false
         }
     }
+
+    public var errorMessage: String? {
+        if case .errored(let error) = self {
+            return error.localizedDescription
+        }
+        return nil
+    }
 }
 
 // Implement Equatable manually since Error doesn't conform

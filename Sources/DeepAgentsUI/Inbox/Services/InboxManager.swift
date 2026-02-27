@@ -52,6 +52,10 @@ public final class InboxManager {
         if let config = try? DeepAgentsUI.configuration, let apiKey = config.langGraphApiKey, !apiKey.isEmpty {
             return true
         }
+        // Auth provider-backed mode (no API key required)
+        if (try? DeepAgentsUI.authProvider) != nil {
+            return true
+        }
         return false
     }
 
@@ -184,7 +188,7 @@ public final class InboxManager {
             case .noInboxSelected:
                 return "No agent inbox selected."
             case .apiKeyRequired:
-                return "Please add your LangSmith API key in Account settings."
+                return "Authentication is required to access LangGraph."
             }
         }
     }

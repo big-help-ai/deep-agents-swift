@@ -124,7 +124,9 @@ public final class CallManager: NSObject, ObservableObject {
             logger.debug("Started call")
             activeCallUUID = callUUID
         } catch {
+            print("[CallManager] Failed to start call: \(error)")
             logger.critical("Failed to start call: \(error)")
+            callState = .errored(error)
         }
     }
 

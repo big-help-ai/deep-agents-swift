@@ -20,12 +20,25 @@ public actor LangGraphClient {
 
     // MARK: - Request Building
 
+    private func authProviderToken() async -> String? {
+        guard apiKey == nil || apiKey?.isEmpty == true else {
+            return nil
+        }
+        guard let authProvider = try? DeepAgentsUI.authProvider else {
+            return nil
+        }
+        guard let token = await authProvider.sessionToken, !token.isEmpty else {
+            return nil
+        }
+        return token
+    }
+
     private func buildRequest(
         path: String,
         method: String = "GET",
         body: JSON? = nil,
         queryParams: [String: String]? = nil
-    ) -> URLRequest {
+    ) async -> URLRequest {
         var urlComponents = URLComponents(string: "\(apiUrl)\(path)")!
 
         if let queryParams = queryParams {
@@ -38,6 +51,12 @@ public actor LangGraphClient {
 
         if let apiKey = apiKey, !apiKey.isEmpty {
             request.setValue(apiKey, forHTTPHeaderField: "X-Api-Key")
+        } else if let token = await authProviderToken() {
+            if token.lowercased().hasPrefix("bearer ") {
+                request.setValue(token, forHTTPHeaderField: "Authorization")
+            } else {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
         }
 
         if let body = body {
@@ -471,7 +490,7 @@ public actor LangGraphClient {
 
     /// Fetch deployment info from the /info endpoint
     public func fetchDeploymentInfo() async throws -> DeploymentInfoResponse {
-        let request = buildRequest(path: "/info")
+        let request = await buildRequest(path: "/info")
         let result = try await performRequest(request)
         return DeploymentInfoResponse(json: result)
     }

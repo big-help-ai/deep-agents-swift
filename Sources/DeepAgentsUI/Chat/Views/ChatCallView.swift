@@ -15,6 +15,7 @@ public struct ChatCallView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
     @State private var hasInitialized = false
     @State private var callThreadId: String?
+    @State private var errorMessage: String?
 
     public init(assistantId: String, callManager: CallManager) {
         self.assistantId = assistantId
@@ -52,6 +53,19 @@ public struct ChatCallView: View {
                 chatService.setThreadId(threadId)
                 callThreadId = nil
             }
+        }
+        .onChange(of: callManager.callState.errorMessage) { _, message in
+            if let message {
+                errorMessage = message
+            }
+        }
+        .alert("Call Failed", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil; callManager.callState = .idle } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 
@@ -152,25 +166,30 @@ public struct ChatCallView: View {
 
     private func startCallFromChat() {
         Task {
-            // Ensure a thread exists
-            var currentThreadId = chatService.threadId
-            print("[ChatCallView] startCallFromChat: chatService.threadId = \(currentThreadId ?? "nil")")
-            if currentThreadId == nil {
-                print("[ChatCallView] No thread exists, creating new one...")
-                let thread = try await chatService.client.threads.create()
-                currentThreadId = thread["thread_id"].stringValue
-                print("[ChatCallView] Created thread: \(currentThreadId ?? "nil")")
-                chatService.setThreadId(currentThreadId)
-            } else {
-                print("[ChatCallView] Reusing existing thread: \(currentThreadId!)")
+            do {
+                // Ensure a thread exists
+                var currentThreadId = chatService.threadId
+                print("[ChatCallView] startCallFromChat: chatService.threadId = \(currentThreadId ?? "nil")")
+                if currentThreadId == nil {
+                    print("[ChatCallView] No thread exists, creating new one...")
+                    let thread = try await chatService.client.threads.create()
+                    currentThreadId = thread["thread_id"].stringValue
+                    print("[ChatCallView] Created thread: \(currentThreadId ?? "nil")")
+                    chatService.setThreadId(currentThreadId)
+                } else {
+                    print("[ChatCallView] Reusing existing thread: \(currentThreadId!)")
+                }
+
+                // Track for reload after call ends
+                callThreadId = currentThreadId
+
+                print("[ChatCallView] Starting call with threadId: \(currentThreadId ?? "nil"), graphName: \(assistantId)")
+                callManager.selectedGraphName = assistantId
+                await callManager.startCall(handle: "user1", threadId: currentThreadId)
+            } catch {
+                print("[ChatCallView] startCallFromChat failed: \(error)")
+                callManager.callState = .errored(error)
             }
-
-            // Track for reload after call ends
-            callThreadId = currentThreadId
-
-            print("[ChatCallView] Starting call with threadId: \(currentThreadId ?? "nil"), graphName: \(assistantId)")
-            callManager.selectedGraphName = assistantId
-            await callManager.startCall(handle: "user1", threadId: currentThreadId)
         }
     }
 
