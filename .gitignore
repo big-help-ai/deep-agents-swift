@@ -33,3 +33,7 @@ Thumbs.db
 
 # Build artifacts
 build/
+
+# Generated
+CLAUDE.md
+AGENTS.md

@@ -3,8 +3,9 @@ import Foundation
 /// Protocol for providing authentication tokens for API requests.
 /// Implement this in your app to integrate with your auth system (e.g., AllAuth).
 public protocol AuthTokenProvider: Sendable {
-    /// Returns the current session token, or nil if not authenticated.
-    var sessionToken: String? { get async }
+    /// Returns the current auth token, or nil if not authenticated.
+    /// This can be a JWT, session token, or any bearer-compatible token.
+    var authToken: String? { get async }
 
     /// Performs an authenticated HTTP request.
     /// - Parameters:

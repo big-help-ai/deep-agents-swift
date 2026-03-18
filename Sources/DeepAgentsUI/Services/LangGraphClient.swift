@@ -27,7 +27,7 @@ public actor LangGraphClient {
         guard let authProvider = try? DeepAgentsUI.authProvider else {
             return nil
         }
-        guard let token = await authProvider.sessionToken, !token.isEmpty else {
+        guard let token = await authProvider.authToken, !token.isEmpty else {
             return nil
         }
         return token
